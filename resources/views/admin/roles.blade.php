@@ -1,0 +1,5 @@
+@extends('layouts.app')
+@section('title','Role & Permission')
+@section('content')
+<div class="page-heading"><div><h1>Role & permission</h1><p>Setiap tindakan diperiksa pada server. Perubahan berlaku pada permintaan berikutnya.</p></div></div>@foreach($roles as $role)<section class="card padded mb-4"><form method="post" action="{{ route('roles.update',$role) }}">@csrf @method('PUT')<div class="d-flex flex-wrap gap-3 align-items-center mb-4"><label class="field mb-0 flex-grow-1">Nama role<input name="name" value="{{ $role->name }}" required></label><span class="pill">{{ $role->slug }}</span></div><div class="permission-grid">@foreach($permissions as $key=>$label)<label class="permission-item"><input name="permissions[]" type="checkbox" value="{{ $key }}" @checked(in_array($key,$role->permissions??[])) @disabled(!auth()->user()->hasPermission('roles.update'))>{{ $label }}</label>@endforeach</div>@allowed('roles.update')<div class="form-actions mt-4"><button class="button">Simpan hak akses {{ $role->name }}</button></div>@endallowed</form></section>@endforeach
+@endsection

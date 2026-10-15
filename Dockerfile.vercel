@@ -1,0 +1,90 @@
+# syntax=docker/dockerfile:1
+
+# Vite needs development dependencies while compiling the production assets.
+FROM node:22-bookworm-slim AS assets
+WORKDIR /build
+COPY package.json package-lock.json ./
+RUN npm ci --include=dev --no-audit --no-fund
+COPY resources ./resources
+COPY vite.config.js ./
+RUN npm run build
+
+FROM php:8.3-apache-bookworm AS application
+
+ENV APP_ENV=production \
+    APP_DEBUG=false \
+    LOG_CHANNEL=stderr \
+    LOG_LEVEL=warning \
+    DB_CONNECTION=mysql \
+    CACHE_STORE=database \
+    SESSION_DRIVER=database \
+    SESSION_SECURE_COOKIE=true \
+    SESSION_ENCRYPT=true \
+    QUEUE_CONNECTION=database \
+    DB_QUEUE_RETRY_AFTER=360 \
+    PRIVATE_FILESYSTEM_DISK=s3 \
+    LARAVEL_STORAGE_PATH=/tmp/pam-storage \
+    VIEW_COMPILED_PATH=/tmp/pam-storage/framework/views \
+    APP_CONFIG_CACHE=/tmp/pam-storage/bootstrap/config.php \
+    APP_EVENTS_CACHE=/tmp/pam-storage/bootstrap/events.php \
+    APP_PACKAGES_CACHE=/tmp/pam-storage/bootstrap/packages.php \
+    APP_ROUTES_CACHE=/tmp/pam-storage/bootstrap/routes.php \
+    APP_SERVICES_CACHE=/tmp/pam-storage/bootstrap/services.php \
+    APACHE_RUN_DIR=/tmp/pam-storage/apache/run \
+    APACHE_LOCK_DIR=/tmp/pam-storage/apache/lock \
+    APACHE_PID_FILE=/tmp/pam-storage/apache/run/apache2.pid \
+    APACHE_LOG_DIR=/tmp/pam-storage/apache/log \
+    PORT=80
+
+# The official PHP image already includes mbstring, DOM/XML, PDO and OPcache.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        libfreetype6-dev libjpeg62-turbo-dev libpng-dev \
+        libicu-dev libzip-dev unzip \
+    && docker-php-ext-configure gd --with-freetype --with-jpeg \
+    && docker-php-ext-install -j"$(nproc)" bcmath gd intl pcntl pdo_mysql zip \
+    && a2enmod rewrite setenvif \
+    && printf '%s\n' \
+        'ServerName localhost' \
+        'ServerTokens Prod' \
+        'ServerSignature Off' \
+        'LogFormat "%h %l %u %t %m %U %H %>s %b" pam_no_query' \
+        'SetEnvIf X-Forwarded-Proto "^https$" HTTPS=on' \
+        > /etc/apache2/conf-available/pam.conf \
+    && printf '%s\n' \
+        '<VirtualHost *:80>' \
+        '    DocumentRoot /var/www/html/public' \
+        '    <Directory /var/www/html/public>' \
+        '        AllowOverride All' \
+        '        Options -Indexes +FollowSymLinks' \
+        '        Require all granted' \
+        '    </Directory>' \
+        '    ErrorLog /proc/self/fd/2' \
+        '    CustomLog /proc/self/fd/1 pam_no_query' \
+        '</VirtualHost>' \
+        > /etc/apache2/sites-available/000-default.conf \
+    && a2enconf pam \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=composer:2 /usr/bin/composer /usr/local/bin/composer
+WORKDIR /var/www/html
+COPY . .
+COPY --from=assets /build/public/build ./public/build
+COPY docker/php.ini /usr/local/etc/php/conf.d/zz-pam.ini
+COPY --chmod=755 docker/entrypoint.sh /usr/local/bin/pam-entrypoint
+
+# Installation is locked, checks the real extensions, and never runs migrations.
+# Keep only the provider manifests in the image; runtime copies them into /tmp.
+RUN mkdir -p bootstrap/cache storage/framework/views \
+        "$LARAVEL_STORAGE_PATH/tmp" "$LARAVEL_STORAGE_PATH/bootstrap" "$VIEW_COMPILED_PATH" \
+    && COMPOSER_ALLOW_SUPERUSER=1 composer install \
+        --no-dev --prefer-dist --no-interaction --no-progress --no-scripts --optimize-autoloader \
+    && composer check-platform-reqs --no-dev \
+    && APP_PACKAGES_CACHE=/var/www/html/bootstrap/cache/packages.php \
+       APP_SERVICES_CACHE=/var/www/html/bootstrap/cache/services.php \
+       php artisan package:discover --ansi \
+    && chown -R www-data:www-data bootstrap/cache storage
+
+EXPOSE 80
+ENTRYPOINT ["/usr/local/bin/pam-entrypoint"]
+CMD ["apache2-foreground"]

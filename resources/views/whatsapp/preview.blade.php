@@ -1,0 +1,14 @@
+@extends('layouts.app')
+@section('title','Pratinjau WhatsApp')
+@section('content')
+<div class="page-heading"><div><div class="eyebrow muted">KONFIRMASI PENGIRIMAN</div><h1>Pratinjau pengingat WhatsApp</h1><p>{{ $ready->count() }} dari {{ $previews->count() }} pelanggan siap masuk antrean. Template: {{ $template->name }} ({{ $template->status }}).</p></div><a class="button secondary" href="{{ route('whatsapp.index',$batch->filters??[]) }}">Kembali ke pemilihan</a></div>
+<div class="alert alert-info">Setiap pelanggan menerima satu pesan berisi seluruh tagihan yang belum lunas. Saldo dan izin diperiksa lagi ketika dikonfirmasi dan ketika antrean diproses. Pelanggan yang sudah lunas dilewati.</div>
+@foreach($previews as $preview)
+<section class="card padded mb-4"><div class="d-flex justify-content-between gap-3 flex-wrap mb-3"><div><h2 class="section-title mb-1">{{ $preview['customer']->name }}</h2><p class="small mb-0">{{ $preview['customer']->number }} · {{ $preview['customer']->rt?->name }} · {{ $preview['phone']?:'Nomor WhatsApp tidak valid' }}</p></div><div><span class="status-badge {{ empty($preview['errors'])?'':'danger' }}">{{ empty($preview['errors'])?'Siap antre':'Tidak dikirim' }}</span><strong class="d-block mt-1">@rupiah($preview['balance'])</strong></div></div>
+    @if(!empty($preview['errors']))<div class="alert alert-danger"><strong>Penerima ini dikeluarkan dari pengiriman:</strong><ul class="mb-0 mt-2">@foreach($preview['errors'] as $error)<li>{{ $error }}</li>@endforeach</ul></div>@endif
+    <div class="table-wrap mb-3"><table><thead><tr><th>Periode tagihan</th><th>Jatuh tempo</th><th>Sisa</th></tr></thead><tbody>@foreach($preview['invoices'] as $invoice)<tr><td>{{ $invoice['period'] }}</td><td>{{ $invoice['due_date'] }}</td><td>@rupiah($invoice['balance'])</td></tr>@endforeach</tbody></table></div>
+    <div class="p-3 rounded border" style="white-space:pre-wrap;overflow-wrap:anywhere;background:#f5faf6">{{ $preview['body'] }}</div>
+</section>
+@endforeach
+<section class="card padded"><form method="post" action="{{ route('whatsapp.send') }}">@csrf<input type="hidden" name="batch_uuid" value="{{ $batch->uuid }}"><label class="d-flex align-items-start gap-2 mb-3"><input type="checkbox" name="confirm" value="1" required @disabled($ready->isEmpty())><span>Saya telah memeriksa {{ $ready->count() }} penerima, nomor tujuan, dan isi pesan di atas.</span></label><div class="d-flex gap-2 flex-wrap"><button class="button" @disabled($ready->isEmpty())><i class="bi bi-whatsapp" aria-hidden="true"></i> Konfirmasi {{ $ready->count() }} pengingat ke antrean</button><a class="button secondary" href="{{ route('whatsapp.index',$batch->filters??[]) }}">Batalkan</a></div><p class="small text-secondary mb-0 mt-3">Pratinjau berlaku sampai {{ $batch->expires_at->format('d/m/Y H:i') }} WIB. Masuk antrean belum berarti pesan telah terkirim; periksa riwayat untuk status penyedia.</p></form></section>
+@endsection
